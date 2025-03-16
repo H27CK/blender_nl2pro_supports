@@ -404,6 +404,52 @@ def create_support_object(
                 edge_beam_metadata_keys
             )
 
+            # new functionality: add cylinder along the beam
+            # default size if not specified = 0.1
+            beam_data = BeamData.from_xml_element(beam)
+            size = beam_data.size1 if beam_data.size1 is not None else 0.1
+
+            # calculate the direction and length of the beam
+            direction = end_vert.co - start_vert.co
+            length = direction.length
+            direction.normalize()
+
+            # create a cylinder along the beam
+            bpy.ops.mesh.primitive_cylinder_add(
+                radius=size,
+                depth=length,
+                location=start_vert.co + direction * length / 2  # Center the cylinder
+            )
+            cylinder = bpy.context.object
+
+            # align the cylinder with the beam direction
+            cylinder.rotation_mode = 'QUATERNION'
+            cylinder.rotation_quaternion = direction.to_track_quat('Z', 'Y')
+
+            ## if there are beam nodes, create a chain of cylinders
+            #if beam_nodes:
+            #    latest_connected_vert = start_vert
+            #    for sub_node in beam_nodes:
+            #        vert, id, type, pos = sub_node
+            #        beamnodes[id] = (vert, type)
+            #        nodes[id] = vert
+
+            #        # create a cylinder for each segment
+            #        segment_direction = vert.co - latest_connected_vert.co
+            #        segment_length = segment_direction.length
+            #        segment_direction.normalize()
+
+            #        bpy.ops.mesh.primitive_cylinder_add(
+            #            radius=size,
+            #            depth=segment_length,
+            #            location=latest_connected_vert.co + segment_direction * segment_length / 2
+            #        )
+            #        segment_cylinder = bpy.context.object
+            #        segment_cylinder.rotation_mode = 'QUATERNION'
+            #        segment_cylinder.rotation_quaternion = segment_direction.to_track_quat('Z', 'Y')
+
+            #        latest_connected_vert = vert
+
     def build_beam_node_chain(beam, beam_nodes, nodes, start_vert):
         """
             connect start_vert and all sub_vert chains (if present) first
