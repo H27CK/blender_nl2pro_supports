@@ -280,13 +280,13 @@ def create_edge_with_metadata(
     BeamData.from_xml_element(beam).insert_metadata(edge, metadata_layers)
 
 
-def import_supports(supports_file: os.PathLike):
+def import_supports(supports_file: os.PathLike, solidify_supports: bool, use_cuboids: bool):
     tree = xml.etree.ElementTree.parse(supports_file)
     root = tree.getroot()
     main_supports = root.find('supports')
 
     import_name = pathlib.Path(supports_file).with_suffix('').name
-    support_object = create_support_object(import_name, main_supports)
+    support_object = create_support_object(import_name, main_supports, solidify_supports=solidify_supports, use_cuboids=use_cuboids)
     support_object.nl2_support.is_support_object = True
 
     support_object_matrix_inverted = support_object.matrix_local.inverted()
@@ -295,7 +295,9 @@ def import_supports(supports_file: os.PathLike):
         prefab_object = create_support_object(
             f'prefab_{prefab_data.custom_track_index}_'
             f'{prefab_data.center_rails_coord}',
-            prefab.find('atomization/supports')
+            prefab.find('atomization/supports'),
+            solidify_supports=solidify_supports,
+            use_cuboids=use_cuboids
         )
         prefab_data.set_properties(prefab_object.nl2_support.prefab)
         matrix_local = support_object_matrix_inverted @ \
@@ -320,7 +322,9 @@ def create_support_object(
                 (0.0, 1.0, 0.0, 0.0),
                 (0.0, 0.0, 1.0, 0.0),
                 (0.0, 0.0, 0.0, 1.0),
-        )
+        ),
+        solidify_supports: bool = False,
+        use_cuboids: bool = False
 ) -> bpy_types.Object:
     mesh = bpy.data.meshes.new(import_name)
     supports_object = bpy.data.objects.new(import_name, mesh)
@@ -354,6 +358,16 @@ def create_support_object(
 
     vert_type_metadata = bm.verts.layers.string.new('vert.type')
 
+    # Create a single mesh for instancing
+    if use_cuboids:
+        bpy.ops.mesh.primitive_cube_add(size=1)
+    else:
+        bpy.ops.mesh.primitive_cylinder_add(radius=1, depth=1)
+
+    shape_object = bpy.context.object
+    shape_mesh = shape_object.data
+    bpy.data.objects.remove(shape_object, do_unlink=True)
+
     def create_support_mesh(supports: Element) -> Tuple[dict, list]:
         nodes = {}
         verts = []
@@ -368,11 +382,11 @@ def create_support_object(
             add_footer_node(nodes, sub_node, verts)
 
         for beam in supports.iterfind('beam'):
-            add_beam(beam, nodes, verts)
+            add_beam(beam, nodes, verts, solidify_supports, shape_mesh, use_cuboids)
 
         return nodes, verts
 
-    def add_beam(beam, nodes, verts):
+    def add_beam(beam, nodes, verts, solidify_supports, shape_mesh, use_cuboids):
         """
             creates a beam either as simple as:
                 start_vert -> end_vert
@@ -404,51 +418,28 @@ def create_support_object(
                 edge_beam_metadata_keys
             )
 
-            # new functionality: add cylinder along the beam
-            # default size if not specified = 0.1
-            beam_data = BeamData.from_xml_element(beam)
-            size = beam_data.size1 if beam_data.size1 is not None else 0.1
+            if solidify_supports:
+                # new functionality: add shape along the beam
+                # default size if not specified = 0.1
+                beam_data = BeamData.from_xml_element(beam)
+                size1 = beam_data.size1 if beam_data.size1 is not None else 0.1
+                size2 = beam_data.size2 if beam_data.size2 is not None else 0.1
 
-            # calculate the direction and length of the beam
-            direction = end_vert.co - start_vert.co
-            length = direction.length
-            direction.normalize()
+                # calculate the direction and length of the beam
+                direction = end_vert.co - start_vert.co
+                length = direction.length
+                direction.normalize()
 
-            # create a cylinder along the beam
-            bpy.ops.mesh.primitive_cylinder_add(
-                radius=size,
-                depth=length,
-                location=start_vert.co + direction * length / 2  # Center the cylinder
-            )
-            cylinder = bpy.context.object
-
-            # align the cylinder with the beam direction
-            cylinder.rotation_mode = 'QUATERNION'
-            cylinder.rotation_quaternion = direction.to_track_quat('Z', 'Y')
-
-            ## if there are beam nodes, create a chain of cylinders
-            #if beam_nodes:
-            #    latest_connected_vert = start_vert
-            #    for sub_node in beam_nodes:
-            #        vert, id, type, pos = sub_node
-            #        beamnodes[id] = (vert, type)
-            #        nodes[id] = vert
-
-            #        # create a cylinder for each segment
-            #        segment_direction = vert.co - latest_connected_vert.co
-            #        segment_length = segment_direction.length
-            #        segment_direction.normalize()
-
-            #        bpy.ops.mesh.primitive_cylinder_add(
-            #            radius=size,
-            #            depth=segment_length,
-            #            location=latest_connected_vert.co + segment_direction * segment_length / 2
-            #        )
-            #        segment_cylinder = bpy.context.object
-            #        segment_cylinder.rotation_mode = 'QUATERNION'
-            #        segment_cylinder.rotation_quaternion = segment_direction.to_track_quat('Z', 'Y')
-
-            #        latest_connected_vert = vert
+                # create an instance of the shape mesh
+                shape_instance = bpy.data.objects.new("ShapeInstance", shape_mesh)
+                if use_cuboids:
+                    shape_instance.scale = (size1 / 2, size2 / 2, length)
+                else:
+                    shape_instance.scale = (size1 / 2, size1 / 2, length)
+                shape_instance.location = start_vert.co + direction * length / 2  # Center the shape
+                shape_instance.rotation_mode = 'QUATERNION'
+                shape_instance.rotation_quaternion = direction.to_track_quat('Z', 'Y')
+                bpy.context.layer_collection.collection.objects.link(shape_instance)
 
     def build_beam_node_chain(beam, beam_nodes, nodes, start_vert):
         """
@@ -567,9 +558,11 @@ def create_support_object(
 
 def execute_import(
         context, filepath, atomize_prefabs: bool,
-        blender_track_connectors: bool
+        blender_track_connectors: bool,
+        solidify_supports: bool,
+        use_cuboids: bool
 ):
-    import_supports(filepath)
+    import_supports(filepath, solidify_supports, use_cuboids)
 
     return {'FINISHED'}
 
@@ -594,20 +587,34 @@ class ImportNl2Supports(Operator, ImportHelper):
     atomized_prefabs: BoolProperty(
         name="Atomized Prefabs",
         description="Uses atomized prefabs on import",
-        default=True,
+        default=True
     )
 
     blender_track_connectors: BoolProperty(
         name="Replicate Track Connectors",
         description="Add Track Connectors to some curve (must be selected on "
                     "import)",
-        default=True,
+        default=True
+    )
+
+    solidify_supports: BoolProperty(
+        name="Solidify Supports",
+        description="Give supports volume",
+        default=False
+    )
+
+    use_cuboids: BoolProperty(
+        name="Use Cuboids",
+        description="Use cuboids instead of cylinders for supports",
+        default=False
     )
 
     def execute(self, context):
         return execute_import(
             context, self.filepath, self.atomized_prefabs,
-            self.blender_track_connectors
+            self.blender_track_connectors,
+            self.solidify_supports,
+            self.use_cuboids
         )
 
 
