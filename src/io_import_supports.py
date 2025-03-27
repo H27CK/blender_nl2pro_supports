@@ -358,7 +358,7 @@ def create_support_object(
 
     vert_type_metadata = bm.verts.layers.string.new('vert.type')
 
-    # Create a single mesh for instancing
+    # create a single mesh for instancing
     if use_cuboids:
         bpy.ops.mesh.primitive_cube_add(size=1)
     else:
@@ -436,7 +436,7 @@ def create_support_object(
                     shape_instance.scale = (size1 / 2, size2 / 2, length)
                 else:
                     shape_instance.scale = (size1 / 2, size1 / 2, length)
-                shape_instance.location = start_vert.co + direction * length / 2  # Center the shape
+                shape_instance.location = start_vert.co + direction * length / 2 # center the shape
                 shape_instance.rotation_mode = 'QUATERNION'
                 shape_instance.rotation_quaternion = direction.to_track_quat('Z', 'Y')
                 bpy.context.layer_collection.collection.objects.link(shape_instance)
