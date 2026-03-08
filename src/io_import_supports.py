@@ -16,14 +16,13 @@ import os
 import pathlib
 import typing
 import xml.etree.ElementTree
-from _elementtree import Element
+from xml.etree.ElementTree import Element
 from typing import (
     Callable, Generic, Literal, Optional, Tuple, TypeVar,
 )
 
 import bpy
 import bmesh
-import bpy_types
 import mathutils
 from bpy.props import BoolProperty, StringProperty
 from bpy.types import Operator
@@ -325,7 +324,7 @@ def create_support_object(
         ),
         solidify_supports: bool = False,
         use_cuboids: bool = False
-) -> bpy_types.Object:
+) -> bpy.types.Object:
     mesh = bpy.data.meshes.new(import_name)
     supports_object = bpy.data.objects.new(import_name, mesh)
     supports_object.matrix_world = matrix_world_transposed
